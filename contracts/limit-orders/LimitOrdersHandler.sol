@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity =0.7.6;
-pragma abicoder v2;
 
 import '../interfaces/IUniswapV3Pool.sol';
 import '../interfaces/callback/IUniswapV3MintCallback.sol';
-import '@openzeppelin/contracts/token/ERC1155/IERC1155.sol';
 import '../interfaces/IERC20Minimal.sol';
+import '../interfaces/ILimitOrderPositionTokens.sol';
+import '../interfaces/IWETH9.sol';
 import '../libraries/TransferHelper.sol';
-import './LimitOrdersTokens.sol';
 
 contract LimitOrdersManager is IUniswapV3MintCallback {
     uint constant SCALEUP_FACTOR = 1e36;
 
-    LimitOrdersTokens public immutable limitOrderPositionTokens;
+    ILimitOrderPositionTokens public immutable limitOrderPositionTokens;
 
-    IERC20Minimal public immutable token0;
-    IERC20Minimal public immutable token1;
+    address public immutable token0;
+    address public immutable token1;
 
     uint public tokenIdCounter = 0;
 
@@ -41,24 +40,22 @@ contract LimitOrdersManager is IUniswapV3MintCallback {
 
     IUniswapV3Pool public uniswapV3Pool; // The address of your UniswapV3Pool
 
-    int24 public immutable override tickSpacing;
+    int24 public immutable tickSpacing;
 
-    address public immutable override WETH9;
+    address public immutable WETH9;
 
     modifier onlyUniswapV3Pool() {
-        require(msg.sender == uniswapV3Pool, 'Not authorized');
+        require(msg.sender == address(uniswapV3Pool), 'Not authorized');
         _;
     }
 
-    constructor(address _uniswapV3Pool, address _WETH9) {
+    constructor(address _uniswapV3Pool, address _WETH9, ILimitOrderPositionTokens _limitOrderPositionTokens) {
         WETH9 = _WETH9;
-
         uniswapV3Pool = IUniswapV3Pool(_uniswapV3Pool);
         tickSpacing = uniswapV3Pool.tickSpacing();
-        token0 = IERC20Minimal(uniswapV3Pool.token0());
-        token1 = IERC20Minimal(uniswapV3Pool.token1());
-
-        limitOrderPositionTokens = new LimitOrdersTokens();
+        token0 = uniswapV3Pool.token0();
+        token1 = uniswapV3Pool.token1();
+        limitOrderPositionTokens = _limitOrderPositionTokens;
     }
 
     function createLimitOrder(address recipient, int24 tick, uint128 amount) external {
@@ -91,10 +88,10 @@ contract LimitOrdersManager is IUniswapV3MintCallback {
         metadata.amountBaseAssetCommitted += amount;
 
         // Mint the ERC1155 token for the order
-        limitOrderPositionTokens.mint(recipient, metadata.tokenid, amount);
+        limitOrderPositionTokens.mint(recipient, metadata.tokenid, amount, '');
 
         // Mint the position in the Uniswap V3 pool
-        v3Pool.mint(
+        uniswapV3Pool.mint(
             address(this),
             tick,
             tick + tickSpacing,
@@ -103,52 +100,79 @@ contract LimitOrdersManager is IUniswapV3MintCallback {
         );
     }
 
-    function collectLimitOrder(address recipent, int24 tick, uint nonce) external onlyUniswapV3Pool {
-        // Get the order Ids for this tick
-        bytes32 orderId = keccak256(abi.encodePacked(tick, nonce));
-        LimitOrderMetadata storage metadata = orderIdToMetadata[orderId];
-        // Get the tokenId for this metadata
-        uint256 tokenId = metadata.tokenid;
-        uint amountToTransfer = 0;
+    struct CollectLimitOrderStruct {
+        bytes32 orderId;
+        uint256 tokenId;
+        uint amountToTransfer;
         address assetToTransfer;
-        uint positionTokenBalance = limitOrderPositionTokens.balanceOf(msg.sender, tokenId);
-        uint scaledUpShares = (positionTokenBalance * SCALEUP_FACTOR) / limitOrderPositionTokens.totalSupply(tokenId);
-        require(positionTokenBalance > 0, 'Not enough position tokens');
+        uint positionTokenBalance;
+        uint scaledUpShares;
+    }
+
+    function collectLimitOrder(address recipent, int24 tick, uint nonce) external onlyUniswapV3Pool {
+        CollectLimitOrderStruct memory collectLimitOrderStruct;
+        // Get the order Ids for this tick
+        collectLimitOrderStruct.orderId = keccak256(abi.encodePacked(tick, nonce));
+        LimitOrderMetadata storage metadata = orderIdToMetadata[collectLimitOrderStruct.orderId];
+
+        // Get the tokenId for this metadata
+        collectLimitOrderStruct.tokenId = metadata.tokenid;
+        collectLimitOrderStruct.positionTokenBalance = limitOrderPositionTokens.balanceOf(
+            msg.sender,
+            collectLimitOrderStruct.tokenId
+        );
+        collectLimitOrderStruct.scaledUpShares =
+            (collectLimitOrderStruct.positionTokenBalance * SCALEUP_FACTOR) /
+            limitOrderPositionTokens.totalSupply(collectLimitOrderStruct.tokenId);
+
+        require(collectLimitOrderStruct.positionTokenBalance > 0, 'Not enough position tokens');
+
         if (metadata.isOrderFilled) {
-            amountToTransfer = (metadata.amountQuoteAssetReceived * scaledUpShares) / SCALEUP_FACTOR;
-            assetToTransfer = metadata.quoteAsset;
+            collectLimitOrderStruct.amountToTransfer =
+                (metadata.amountQuoteAssetReceived * collectLimitOrderStruct.scaledUpShares) /
+                SCALEUP_FACTOR;
+            collectLimitOrderStruct.assetToTransfer = metadata.quoteAsset;
         } else {
             // Collect liquidity from the pool.
             // The collected amounts are now held by this contract.
             uint amount0ToCollect;
             uint amount1ToCollect;
-            uint baseAssetToCollect = (metadata.amountBaseAssetCommitted * scaledUpShares) / SCALEUP_FACTOR;
+            uint baseAssetToCollect = (metadata.amountBaseAssetCommitted * collectLimitOrderStruct.scaledUpShares) /
+                SCALEUP_FACTOR;
             if (metadata.baseAsset == token0) {
                 (amount0ToCollect, amount1ToCollect) = (baseAssetToCollect, 0);
             } else {
                 (amount0ToCollect, amount1ToCollect) = (0, baseAssetToCollect);
             }
-            (uint256 collectedAmount0, uint256 collectedAmount1) = v3Pool.collect(
+            (uint256 collectedAmount0, uint256 collectedAmount1) = uniswapV3Pool.collect(
                 address(this),
                 tick,
                 tick + tickSpacing,
-                amount0ToCollect, // max amount of token0
-                amount1ToCollect // max amount of token1
+                uint128(amount0ToCollect), // max amount of token0
+                uint128(amount1ToCollect) // max amount of token1
             );
-            amountToTransfer = baseAssetToCollect;
-            assetToTransfer = metadata.baseAsset;
+            collectLimitOrderStruct.amountToTransfer = baseAssetToCollect;
+            collectLimitOrderStruct.assetToTransfer = metadata.baseAsset;
         }
-        if (amountToTransfer > 0 && (metadata.quoteAssetBalance > 0 || metadata.amountBaseAssetCommitted)) {
-            _pay(recipent, address(this), amountToTransfer, assetToTransfer);
+        if (
+            collectLimitOrderStruct.amountToTransfer > 0 &&
+            (metadata.quoteAssetBalance > 0 || metadata.amountBaseAssetCommitted > 0)
+        ) {
+            _pay(
+                collectLimitOrderStruct.assetToTransfer,
+                address(this),
+                recipent,
+                collectLimitOrderStruct.amountToTransfer
+            );
         }
     }
 
     function processLimitOrdersAtTick(int24 crossedTick) external onlyUniswapV3Pool {
         // Get the order Ids for this tick
-        bytes32 memory orderId = keccak256(abi.encodePacked(crossedTick, tickToNonce[crossedTick]));
+        bytes32 orderId = keccak256(abi.encodePacked(crossedTick, tickToNonce[crossedTick]));
         LimitOrderMetadata storage metadata = orderIdToMetadata[orderId];
 
-        if (metadata.isOrderFilled == 0) {
+        if (metadata.isOrderFilled) {
             return;
         }
         if (metadata.amountBaseAssetCommitted == 0) {
@@ -157,10 +181,10 @@ contract LimitOrdersManager is IUniswapV3MintCallback {
 
         // Collect liquidity from the pool.
         // The collected amounts are now held by this contract.
-        (uint256 collectedAmount0, uint256 collectedAmount1) = v3Pool.collect(
+        (uint256 collectedAmount0, uint256 collectedAmount1) = uniswapV3Pool.collect(
             address(this),
-            tick,
-            tick + tickSpacing,
+            crossedTick,
+            crossedTick + tickSpacing,
             type(uint128).max, // max amount of token0
             type(uint128).max // max amount of token1
         );
