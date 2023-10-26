@@ -3,13 +3,14 @@
 
 pragma solidity ^0.8.20;
 
-import {IERC1155} from './IERC1155.sol';
-import {IERC1155Receiver} from './IERC1155Receiver.sol';
-import {IERC1155MetadataURI} from './IERC1155MetadataURI.sol';
+import '../interfaces/erc1155/IERC1155.sol';
+import '../interfaces/erc1155/IERC1155Receiver.sol';
+import '../interfaces/erc1155/IERC1155MetadataURI.sol';
+import '../interfaces/erc1155/IERC1155Errors.sol';
+
 import './ERC165.sol';
-import './Arrays.sol';
-import './IERC1155Errors.sol';
-import './Context.sol';
+import '../libraries/Arrays.sol';
+import '../libraries/Context.sol';
 
 /**
  * @dev Implementation of the basic standard multi-token.
