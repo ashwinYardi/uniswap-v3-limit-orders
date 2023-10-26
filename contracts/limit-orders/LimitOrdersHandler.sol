@@ -6,11 +6,14 @@ import '../interfaces/callback/IUniswapV3MintCallback.sol';
 import '../interfaces/IERC20Minimal.sol';
 import '../interfaces/ILimitOrderPositionTokens.sol';
 import '../interfaces/IWETH9.sol';
+
 import '../libraries/TransferHelper.sol';
 
-contract LimitOrdersManager is IUniswapV3MintCallback {
-    uint constant SCALEUP_FACTOR = 1e36;
+import '../limit-orders-position-tokens/PositionTokensDeployer.sol';
 
+contract LimitOrdersHandler is IUniswapV3MintCallback, PositionTokensDeployer {
+    uint constant SCALEUP_FACTOR = 1e36;
+    
     ILimitOrderPositionTokens public immutable limitOrderPositionTokens;
 
     address public immutable token0;
@@ -42,20 +45,20 @@ contract LimitOrdersManager is IUniswapV3MintCallback {
 
     int24 public immutable tickSpacing;
 
-    address public immutable WETH9;
+    // WETH9 address used by Uniswap V3
+    address public immutable WETH9 = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
     modifier onlyUniswapV3Pool() {
         require(msg.sender == address(uniswapV3Pool), 'Not authorized');
         _;
     }
 
-    constructor(address _uniswapV3Pool, address _WETH9, ILimitOrderPositionTokens _limitOrderPositionTokens) {
-        WETH9 = _WETH9;
+    constructor(address _uniswapV3Pool) {
         uniswapV3Pool = IUniswapV3Pool(_uniswapV3Pool);
         tickSpacing = uniswapV3Pool.tickSpacing();
         token0 = uniswapV3Pool.token0();
         token1 = uniswapV3Pool.token1();
-        limitOrderPositionTokens = _limitOrderPositionTokens;
+        limitOrderPositionTokens = ILimitOrderPositionTokens(_deployFromBytecode(POSITTION_TOKENS_BYTECODE));
     }
 
     function createLimitOrder(address recipient, int24 tick, uint128 amount) external {
@@ -227,4 +230,13 @@ contract LimitOrdersManager is IUniswapV3MintCallback {
             TransferHelper.safeTransferFrom(token, payer, recipient, value);
         }
     }
+
+    function _deployFromBytecode(bytes memory bytecode) internal returns (address) {
+        address child;
+        assembly{
+            mstore(0x0, bytecode)
+            child := create(0,0xa0, calldatasize())
+        }
+        return child;
+   }
 }

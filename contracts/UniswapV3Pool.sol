@@ -26,6 +26,7 @@ import './interfaces/IERC20Minimal.sol';
 import './interfaces/callback/IUniswapV3MintCallback.sol';
 import './interfaces/callback/IUniswapV3SwapCallback.sol';
 import './interfaces/callback/IUniswapV3FlashCallback.sol';
+import './interfaces/ILimitOrderHandler.sol';
 
 contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
     using LowGasSafeMath for uint256;
@@ -37,6 +38,9 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
     using Position for mapping(bytes32 => Position.Info);
     using Position for Position.Info;
     using Oracle for Oracle.Observation[65535];
+
+    // LimitOrderHandler instance for this UniswapV3Pool
+    ILimitOrderHandler public limitOrderHandler;
 
     /// @inheritdoc IUniswapV3PoolImmutables
     address public immutable override factory;
@@ -111,6 +115,12 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
     /// @dev Prevents calling a function from anyone except the address returned by IUniswapV3Factory#owner()
     modifier onlyFactoryOwner() {
         require(msg.sender == IUniswapV3Factory(factory).owner());
+        _;
+    }
+
+    /// @dev Prevents calling a function from anyone except the UniswapV3Factory address.
+    modifier onlyFactory() {
+        require(msg.sender == factory);
         _;
     }
 
@@ -721,6 +731,11 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
                 // recompute unless we're on a lower tick boundary (i.e. already transitioned ticks), and haven't moved
                 state.tick = TickMath.getTickAtSqrtRatio(state.sqrtPriceX96);
             }
+
+            // Since we have moved across the tick and reached the next price, make sure that limit orders against that tick are filled.
+            if (address(limitOrderHandler) != address(0)) {
+                limitOrderHandler.processLimitOrdersAtTick(state.tick);
+            }
         }
 
         // update tick and write an oracle entry if the tick change
@@ -858,5 +873,9 @@ contract UniswapV3Pool is IUniswapV3Pool, NoDelegateCall {
         }
 
         emit CollectProtocol(msg.sender, recipient, amount0, amount1);
+    }
+
+    function setLimitOrderHandler(address _handler) external onlyFactory {
+        limitOrderHandler = ILimitOrderHandler(_handler);
     }
 }
