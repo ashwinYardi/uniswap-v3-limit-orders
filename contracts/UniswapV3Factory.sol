@@ -2,11 +2,11 @@
 pragma solidity =0.7.6;
 
 import './interfaces/IUniswapV3Factory.sol';
-
 import './UniswapV3PoolDeployer.sol';
 import './NoDelegateCall.sol';
 
 import './UniswapV3Pool.sol';
+import './limit-orders/LimitOrdersHandler.sol';
 
 /// @title Canonical Uniswap V3 factory
 /// @notice Deploys Uniswap V3 pools and manages ownership and control over pool protocol fees
@@ -48,6 +48,17 @@ contract UniswapV3Factory is IUniswapV3Factory, UniswapV3PoolDeployer, NoDelegat
         // populate mapping in the reverse direction, deliberate choice to avoid the cost of comparing addresses
         getPool[token1][token0][fee] = pool;
         emit PoolCreated(token0, token1, fee, tickSpacing, pool);
+    }
+
+    // TODO: Make the deployment of LimitOrderHandler and Position token permissionless.
+    function updateLimitOrdersHandlerForPool(address pool) external {
+        require(msg.sender == owner);
+
+        // Deploy the LimitOrdersHandler
+        address limitOrderHandler = address(new LimitOrdersHandler(pool));
+
+        // Set the LimitOrderHandler contract on Pool.
+        UniswapV3Pool(pool).setLimitOrderHandler(limitOrderHandler);
     }
 
     /// @inheritdoc IUniswapV3Factory
