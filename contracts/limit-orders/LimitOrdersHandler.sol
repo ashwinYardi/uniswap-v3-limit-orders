@@ -207,6 +207,14 @@ contract LimitOrdersHandler is IUniswapV3MintCallback, PositionTokensDeployer {
             collectLimitOrderStruct.assetToTransfer = metadata.baseAsset;
         }
 
+        // Burn the position tokens before transferring money..
+        // Requires Allowance
+        limitOrderPositionTokens.burn(
+            msg.sender,
+            collectLimitOrderStruct.tokenId,
+            collectLimitOrderStruct.positionTokenBalance
+        );
+
         // Now whether its a baseAsset or quoteAsset, transfer the apt amount to recipient.
         if (
             collectLimitOrderStruct.amountToTransfer > 0 &&
