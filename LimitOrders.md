@@ -109,9 +109,10 @@ The code is heavily documented. For further explaination please go through the c
 
 ## Things Remaining:
 
-1. Posittion Tokens use solidity version 0.8.20. But rest of the code uses v0.7.6. Solidity compiler should be unified to avoid some redunduant files that are used atm.
-2. The way LimitOrderHandler deploys Position Tokens is not standard. It should dynamically calculat bytecode. But solidity version mismatch makes it tedious. Again, using the single solidity compiler ( latest preferably ) will avoid this.
-3. Test Cases and End to End testing. This is just he POC code.
-4. Scenario scripts
-5. Gas Optimization: Code has been writen the short span of time. it can further be optimized e.g. Variable packing for structs. Also the carefully using the datatypes.
-6. This is POC. But to get it work with real Uniswap V3, we need to work aith Gelato like services to colelct our positions from Unioswap V3 pool.
+- The biggest feature that we need to add is fee management. The liquidity that is supplied at a Tick is also earning the fees. Now we need way to access this fee. Either portion of that fees should be given to Limit order owners and the rest can be taken as a protocol fee by the contract owner.
+- Posittion Tokens use solidity version 0.8.20. But rest of the code uses v0.7.6. Solidity compiler should be unified to avoid some redunduant files that are used atm.
+- The way LimitOrderHandler deploys Position Tokens is not standard. It should dynamically calculat bytecode. But solidity version mismatch makes it tedious. Again, using the single solidity compiler ( latest preferably ) will avoid this.
+- Test Cases and End to End testing. This is just he POC code.
+- Scenario scripts
+- Gas Optimization: Code has been writen the short span of time. it can further be optimized e.g. Variable packing for structs. Also the carefully using the datatypes.
+- This is POC. But to get it work with real Uniswap V3, we need to work aith Gelato like services to colelct our positions from Unioswap V3 pool.
